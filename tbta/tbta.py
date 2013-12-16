@@ -10,6 +10,26 @@ from os import sep, sys, makedirs
 from os.path import exists
 from re import match
 
+# Parameters
+
+# No words with an occurrence below this number are allowed
+NO_BELOW = 4 
+
+# Fraction of most common words to drop away 
+NO_ABOVE = 0.1 
+
+ # Number of LDA iterations to fullfil
+PASSES = 1
+
+# Set to -1 to default to k = number of documents
+NUM_TOPICS = 42
+
+# Number of (random) topics to display
+TOPICS_DISPLAY = 7 
+
+# Number of top probable words of topic shown to display
+WORDS_DISPLAY = 7 
+
 # Filename prefix
 SAC_FILENAME_PREFIX = 'SAC-Jahrbuch_'
 
@@ -21,8 +41,8 @@ DE_LANG = 'de'
 FR_LANG = 'fr'
 
 # Only use German words from these categories
-#DE_POS_FILTER = ['NN']
-DE_POS_FILTER = ['NN', 'NE', 'ADJA', 'ADJD', 'VVPP', 'VVINF']
+DE_POS_FILTER = ['NN']
+#DE_POS_FILTER = ['NN', 'ADJA', 'ADJD', 'VVPP', 'VVINF']
 
 # Only use French words from these categories
 FR_POS_FILTER = ['N_P', 'N_C', 'V']
@@ -90,16 +110,22 @@ class ArticlesCollection:
         # dictionary = Dictionary.load_from_text(wordsids_filepath)
         
         # k = number of documents = number of topics (for now)
+        num_topics = tfidf.num_docs
+        if NUM_TOPICS != -1:
+            num_topics = NUM_TOPICS
+        print(num_topics)
+            
         lda = LdaModel(corpus=tfidf,
                        id2word=self.dictionary,
-                       num_topics=tfidf.num_docs,
-                       passes=15,
+                       num_topics=num_topics,
+                       passes=PASSES,
                        distributed=True)
         topic_number = 0
-        for topic in lda.print_topics(5):
+        for topic in lda.show_topics(topics=TOPICS_DISPLAY, 
+                                     topn=WORDS_DISPLAY):
             topic_number += 1
             print('Topic#' + str(topic_number) + ': ', topic)
-                
+                            
     def _set_filepaths(self):
         """Sets filepaths for intermediate data."""
 
@@ -116,7 +142,8 @@ class ArticlesCollection:
         
         print('Create dictionary of collection.')
         self.dictionary = Dictionary(self.articles)
-        self.dictionary.filter_extremes(no_below=5)
+        self.dictionary.filter_extremes(no_below=NO_BELOW, 
+                                        no_above=NO_ABOVE)
         self.dictionary.save_as_text(self.wordsids_filepath)
         print(self.dictionary)
     
