@@ -20,6 +20,13 @@ XML_SUFFIX = '.xml'
 DE_LANG = 'de'
 FR_LANG = 'fr'
 
+# Only use German words from these categories
+#DE_POS_FILTER = ['NN']
+DE_POS_FILTER = ['NN', 'NE', 'ADJA', 'ADJD', 'VVPP', 'VVINF']
+
+# Only use French words from these categories
+FR_POS_FILTER = ['N_P', 'N_C', 'V']
+
 # Years available in SAC corpus
 YEARS_ALLOWED = range(1864, 2012) # 1864 to 2011
 
@@ -70,7 +77,6 @@ class ArticlesCollection:
         self._read_collection()
         self._collection_identifier()
         self._set_filepaths()
-        self._remove_single_words()
         self._create_dictionary()
         self._create_bow_representation()
         self._create_tfidf_matrix()
@@ -87,13 +93,13 @@ class ArticlesCollection:
         lda = LdaModel(corpus=tfidf,
                        id2word=self.dictionary,
                        num_topics=tfidf.num_docs,
-                       passes=1,
+                       passes=15,
                        distributed=True)
         topic_number = 0
-        for topic in lda.print_topics(10):
+        for topic in lda.print_topics(5):
             topic_number += 1
             print('Topic#' + str(topic_number) + ': ', topic)
-    
+                
     def _set_filepaths(self):
         """Sets filepaths for intermediate data."""
 
@@ -110,6 +116,7 @@ class ArticlesCollection:
         
         print('Create dictionary of collection.')
         self.dictionary = Dictionary(self.articles)
+        self.dictionary.filter_extremes(no_below=5)
         self.dictionary.save_as_text(self.wordsids_filepath)
         print(self.dictionary)
     
@@ -132,6 +139,7 @@ class ArticlesCollection:
                            normalize=True)
         MmCorpus.serialize(self.tfidf_filepath, 
                            tfidf[self.bow_corpus])
+        print('Number of documents:', tfidf.num_docs)
 
     def _collection_identifier(self):
         """Collection id is important for the caching files and the
@@ -179,35 +187,20 @@ class ArticlesCollection:
                     try:
                         # Look for POS tags of FR_LANG
                         if self.lang is not DE_LANG:
-                            if sac_xml_word.attrib['pos'] == 'N_P' \
-                            or sac_xml_word.attrib['pos'] == 'N_C' \
-                            or sac_xml_word.attrib['pos'] == 'V':
+                            if sac_xml_word.attrib['pos'] \
+                            in FR_POS_FILTER:
                                 article_word_list.append(sac_xml_word.\
                                 attrib['lemma'].lower())
                         # Assume DE_LANG (default lang)
                         else:
-                            if sac_xml_word.attrib['pos'] == 'NN' \
-                            or sac_xml_word.attrib['pos'] == 'NE' \
-                            or sac_xml_word.attrib['pos'] == 'VVFIN':
+                            if sac_xml_word.attrib['pos'] \
+                            in DE_POS_FILTER:
                                 article_word_list.append(sac_xml_word.\
                                 attrib['lemma'].lower())
                     except: # PoS attribute may not be given
                         pass
             # Save article as bag-of-words (of the sentences)
             self.articles.append(article_word_list)
-    
-    def _remove_single_words(self):
-        """Remove words which appear only (up to) a certain number of
-           times; code as inspired by gensim website:
-           http://radimrehurek.com/gensim/tut1.html#corpus-streaming-one-document-at-a-time
-        """
-        print("Remove words which appear only up to three times.")
-        all_words = sum(self.articles, [])
-        words_to_drop = set(word for word in set(all_words) 
-                         if all_words.count(word) <= 3)
-        self.articles = [[word for word in text 
-                          if word not in words_to_drop]
-                          for text in self.articles]
                 
     def __str__(self):
         """ Return a string which shows document number, number of
@@ -241,13 +234,15 @@ def print_help(program_name):
     
 def print_year_not_allowed():
     """Simply print out which ranges are feasible."""
+    
     print("Not allowed year (range).")
     print_help(sys.argv[0])    
 
 def create_caching_folders():
     """Creates folders used for caching pre-processing results."""
+    
     if not exists(WORDSIDS_DIR):
-        makedirs(WORDIDS_DIR)
+        makedirs(WORDSIDS_DIR)
     if not exists(TFIDF_DIR):
         makedirs(TFIDF_DIR)
     if not exists(BOWMM_DIR):
