@@ -15,7 +15,7 @@ from re import match
 # No words with an occurrence below this number are allowed
 NO_BELOW = 4 
 
-# Fraction of most common words to drop away 
+# Fraction of most frequent words to drop away 
 NO_ABOVE = 0.1 
 
  # Number of LDA iterations to fullfil
@@ -45,7 +45,9 @@ DE_POS_FILTER = ['NN']
 #DE_POS_FILTER = ['NN', 'ADJA', 'ADJD', 'VVPP', 'VVINF']
 
 # Only use French words from these categories
-FR_POS_FILTER = ['N_P', 'N_C', 'V']
+FR_POS_FILTER = ['N_C']
+#FR_POS_FILTER = ['N_P', 'N_C', 'V']
+#FR_POS_FILTER = ['N_C', 'A_qual', 'V']
 
 # Years available in SAC corpus
 YEARS_ALLOWED = range(1864, 2012) # 1864 to 2011
