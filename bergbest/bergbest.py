@@ -22,9 +22,6 @@ NER_SUBSTR = '-ner'
 # SAC XML folder path
 SAC_XML_DIR = 'Text+Berg_Release_147_v03' + sep + 'XML' + sep \
             + 'SAC' + sep
-            
-# Geo types we are looking for
-GEO_NE_TYPE = 'mountain'
 
 # Range of documents to check
 YEAR_RANGE = range(1957, 2012) # 1957-2011
@@ -55,7 +52,7 @@ class ArticleTranslated:
     """Class to hold a (single) article pair; used for analysis of 
        candidate facts."""
     
-    def __init__(self, article_pair, yearbook):
+    def __init__(self, article_pair, yearbook, book_ne):
         
         # Meta data
         self.yearbook = yearbook
@@ -67,10 +64,13 @@ class ArticleTranslated:
         self.candidate_sentences_fr_number = 0
         
         # Effective data
+        self.book_ne = book_ne
         self.sentences_de = []
         self.sentences_fr = []
         self.candidate_sentences_de = []
         self.candidate_sentences_fr = []
+        self.mountain_dict_de = {}
+        self.mountain_dict_fr = {}
 
         # XXX: Todo if time given
         self.candidate_supersentences_de = []
@@ -78,7 +78,20 @@ class ArticleTranslated:
         
         self._read_title(article_pair)
         self._read_sentences(article_pair)
+        self._create_candidate_sentences(DE_LANG)
+        self._create_candidate_sentences(FR_LANG)
+    
+    def _search_candidate_sentences(self):
+        """Find sentences which contain NEs."""
+        sentences = []
+        ne_tag = ''
         
+        if DE_LANG:
+            sentences = self.sentences_de
+        elif FR_LANG:
+            sentences = self.sentences_fr
+                                    
+                    
     def _read_title(self, article_pair):
         """Read title (in German and French) of article pair given."""
         article_de = article_pair[0]
@@ -196,14 +209,135 @@ class BookTranslated:
             self.articles_pairs.append(article_pair)
             self.articles_number += 1
 
-def read_geo_ne(filepath, geo_ne_type=GEO_NE_TYPE):
-    """Returns a dict with position of geo entity and type as value."""
-    geo_ne_dict = dict()
-    sac_geo_elem = etree.parse(filepath).xpath('/ner/geo')[0]
+class Mountain:
+    """Information about a mountain."""
     
-    # Get all <g> elements, where type equals GEO_NE_TYPE
-    sac_g_elem_list = sac_geo_elem.xpath('.//g[@type=\'' + \
-                                                GEO_NE_TYPE + '\']')
+    def __init__(self):
+        self.stid = '' # Collection-wide id (unique)
+        self.name_parts = []
+        self.name = '' # Name in full length
+        self.location = [] # One location can span several 
+        
+    def __str__(self):
+        """Print mountain."""
+        return self.name
+        
+class Person:
+    """Information about a person."""
+    
+    def __init__(self):
+        self.pid = '' # Document-wide id (not collection unique)
+        self.firstname = ''
+        self.lastname = ''
+        self.locations = [] # Contains othter lists with spanned locs
+        # More information can be gathered, but is of no use now.
+
+    def __str__(self):
+        """Print person."""
+        return self.firstname + ' ' + self.lastname
+        
+class BookNE:
+    """Class which holds a book's Named Entities."""
+    
+    def __init__(self, year):
+        self.year = year
+        self.mountains_de = []
+        self.mountains_fr = []
+        self.persons_de = []
+        self.persons_fr = []
+        self.filepath_de = self._filepath(DE_LANG)
+        self.filepath_fr = self._filepath(FR_LANG)
+        
+        # XML XPath of NEs we need
+        self.XML_PATH_MOUNTAINS = '/ner/geo'
+        self.XML_PATH_PERSONS = '/ner/persons'
+        
+        # Collect NEs
+        self._source_mountains(DE_LANG)
+        self._source_mountains(FR_LANG)
+        self._source_persons(DE_LANG)
+        self._source_persons(FR_LANG)
+    
+    def _source_mountains(self, lang):
+        """Collect mountains in NER file."""
+        sac_geo_elem = None
+        
+        if lang == DE_LANG:
+            sac_geo_elem = self._etree_parse(self.filepath_de,
+                                             self.XML_PATH_MOUNTAINS)[0]
+        elif lang == FR_LANG:
+            sac_geo_elem = self._etree_parse(self.filepath_fr,
+                                            self.XML_PATH_MOUNTAINS)[0]
+        
+        # Get all <g> elements, where types is a mountain
+        sac_g_elem_list = sac_geo_elem.xpath('.//g[@type=\'' + \
+                                             'mountain' + '\']')
+     
+        # Go through all <g> elements found
+        for sac_g_elem in sac_g_elem_list:
+            mountain = Mountain()
+            mountain.stid = sac_g_elem.attrib['stid']
+            mountain.location = sac_g_elem.attrib['span'].split(',')
+            
+            if lang == DE_LANG:
+                self.mountains_de.append(mountain)
+            elif lang == FR_LANG:
+                self.mountains_fr.append(mountain)
+            
+    def _etree_parse(self, filepath, xmlpath):
+        """Return etree parse of an XML file."""
+        return etree.parse(filepath).xpath(xmlpath)
+        
+    def _source_persons(self, lang):
+        """Collect presons in NER file."""
+        sac_per_elem = None
+        
+        if lang == DE_LANG:
+            sac_per_elem = self._etree_parse(self.filepath_de,
+                                             self.XML_PATH_PERSONS)[0]
+        elif lang == FR_LANG:
+            sac_per_elem = self._etree_parse(self.filepath_fr,
+                                            self.XML_PATH_PERSONS)[0]
+        
+        # Get all <person> elements
+        sac_person_elem_list = sac_per_elem.xpath('person')
+        
+        # Go through all <person> elements
+        for sac_person in sac_person_elem_list:
+            person = Person()
+            person.pid = sac_person.attrib['id']
+            person.firstname = sac_person.xpath('./firstname')[0].text
+            person.lastname = sac_person.xpath('./lastname')[0].text
+            sac_per_positions = sac_person.xpath('.//positions')
+            
+            for sac_per_position in sac_per_positions:
+                sac_position_parts = sac_per_position.\
+                                      xpath('./position')
+                position = []
+                for sac_position_part in sac_position_parts:
+                    position.append(sac_position_part.text)
+                    
+                person.locations.append(position)
+                
+            if lang == DE_LANG:
+                self.persons_de.append(person)
+            elif lang == FR_LANG:
+                self.persons_fr.append(person)
+    
+    def _filepath(self, lang):
+        """Return filepath to NE file dependent on the language."""
+        return(SAC_XML_DIR + FILENAME_PREFIX + \
+               str(self.year) + '_' + lang + NER_SUBSTR + \
+               XML_SUFFIX)
+               
+    def __str__(self):
+        """Return information about the the Named Entities found."""
+        return 'Mountains: ' + str(len(self.mountains_de)) + ' |  ' + \
+               str(len(self.mountains_fr)) +\
+               '\nPersons: ' + str(len(self.persons_de)) + ' | ' + \
+               str(len(self.persons_fr))
+
+    '''
                                                 
     for sac_g_elem in sac_g_elem_list:
         locations = sac_g_elem.attrib['span'].split(',')
@@ -211,18 +345,18 @@ def read_geo_ne(filepath, geo_ne_type=GEO_NE_TYPE):
             geo_ne_dict[loc] = geo_ne_type
             
     return geo_ne_dict
+    '''
 
-def explore_bergsteiger(book_translated, year):
+def explore_bergsteiger(book_translated, year, book_ne):
     
     # Get article pair of yearbook given
     articles_pairs = book_translated.articles_pairs
     
     # Go through each article pair
     for article_pair in articles_pairs:
-        #print article_pair[0].xpath('./tocEntry')[0].attrib['title']
-        article_translated = ArticleTranslated(article_pair, year)
+        article_translated = ArticleTranslated(article_pair, year, 
+                                               book_ne)
         print(article_translated)
-    
     """
     for year in YEAR_RANGE:
         filepath_base = SAC_XML_DIR + FILENAME_PREFIX + \
@@ -266,12 +400,13 @@ def process_xml():
         book_translated = BookTranslated(filepath)
         
         # Search for people who climbed (supposedely) mountains
-        explore_bergsteiger(book_translated, year)
+        book_ne = BookNE(year)
+        explore_bergsteiger(book_translated, year, book_ne)
     
 def main():
     process_xml()
                 
-    return 0
+    return(0)
 
 if __name__ == '__main__':
 	main()
