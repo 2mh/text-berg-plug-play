@@ -5,6 +5,7 @@
 from lxml import etree
 from os import sep
 from re import sub
+from sys import stdout
 
 # Filename prefix
 FILENAME_PREFIX = "SAC-Jahrbuch_"
@@ -81,17 +82,93 @@ class ArticleTranslated:
         self._create_candidate_sentences(DE_LANG)
         self._create_candidate_sentences(FR_LANG)
     
-    def _search_candidate_sentences(self):
+    def _create_candidate_sentences(self, lang):
         """Find sentences which contain NEs."""
         sentences = []
         ne_tag = ''
+        mountains = None
+        persons = None
+        word_positions = []
+        mountain_positions = []
+        person_positions = []
         
-        if DE_LANG:
+        if lang == DE_LANG:
             sentences = self.sentences_de
-        elif FR_LANG:
+            mountains = self.book_ne.mountains_de
+            persons = self.book_ne.persons_de
+        elif lang == FR_LANG:
             sentences = self.sentences_fr
+            mountains = self.book_ne.mountains_fr
+            persons = self.book_ne.persons_fr
+            
+        for sentence in sentences:
+            # Get all words' positions
+            for word in sentence.xpath('./w'):
+                word_positions.append(word.attrib['n'])
+        
+        mountain_positions = self.book_ne.mountain_positions(lang)
+        person_positions = self.book_ne.person_positions(lang)
+
+        mountains_present = set(mountain_positions).\
+                            intersection(set(word_positions))
+        persons_present = set(person_positions).\
+                          intersection(set(word_positions))
+        
+        """
+        if len(mountains_present) > 0:
+            print("*** Mountain")
+            
+        if len(persons_present) > 0:
+            print("*** Person")
+            
+        if len(mountains_present) > 0 and len(persons_present) > 0:
+            print("*** Both: Mountain AND Person")
+        """
+
+        mountain_sentences = [position.split('-')[1] for position in \
+                              mountains_present]
+        person_sentences = [position.split('-')[1] for position in \
+                            persons_present]
+        mountain_and_person_sentences = set(mountain_sentences).\
+                                        intersection(set(person_sentences))
+       
+        print('Sentences with mountains (' + lang + '):', 
+               mountain_sentences)
+        print('Sentences with persons (' + lang + '):', 
+               person_sentences)
+        print('Sentences with both (' + lang + '):', 
+               mountain_and_person_sentences)
+        
+        for sentence in sentences:
+            if sentence.attrib['n'].split('-')[1] in \
+            mountain_and_person_sentences:
+                for word in sentence.xpath('w'):
+                    try:
+                        if lang == DE_LANG:
+                            if word.attrib['lemma'] == 'besteigen':
+                                print("* * * CHECK (de)")
+                                self._print_sentence(sentence)
+                        elif lang == FR_LANG:
+                            if word.attrib['lemma'] == 'traverser':
+                                print("* * * CHECK (fr)")
+                                self._print_sentence(sentence)
+                    except:
+                        pass
+                    try:
+                        if lang == DE_LANG:
+                            if word.attrib['pos'].startswith('VV'):
+                                print('VERB (' + lang + '): ' + word.text)
+                        elif lang == FR_LANG:
+                            if word.attrib['pos'].startswith('V'):
+                                print('VERB: (' + lang + '): ' + word.text)
+                    except:
+                        pass
+    
+    def _print_sentence(self, sentence):
+        """Prints sentence as a whole."""
+        for word in sentence.xpath('w'):
+            stdout.write(word.text + " ")
                                     
-                    
     def _read_title(self, article_pair):
         """Read title (in German and French) of article pair given."""
         article_de = article_pair[0]
@@ -329,7 +406,40 @@ class BookNE:
         return(SAC_XML_DIR + FILENAME_PREFIX + \
                str(self.year) + '_' + lang + NER_SUBSTR + \
                XML_SUFFIX)
-               
+    
+    def mountain_positions(self, lang):
+        """Return all mountain positions -- flat way."""
+        mountains = None
+        positions = []
+        
+        if lang == DE_LANG:
+            mountains = self.mountains_de
+        elif lang == FR_LANG:
+            mountains = self.mountains_fr
+            
+        for mountain in mountains:
+            for position in mountain.location:
+                positions.append(position)
+                
+        return positions
+    
+    def person_positions(self, lang):
+        """Return positions of persons -- flat way."""
+        persons = None
+        positions = []
+        
+        if lang == DE_LANG:
+            persons = self.persons_de
+        elif lang == FR_LANG:
+            persons = self.persons_fr
+            
+        for person in persons:
+            for location in person.locations:
+                for location_part in location:
+                    positions.append(location_part)
+                
+        return positions
+    
     def __str__(self):
         """Return information about the the Named Entities found."""
         return 'Mountains: ' + str(len(self.mountains_de)) + ' |  ' + \
