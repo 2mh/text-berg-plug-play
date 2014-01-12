@@ -3,7 +3,7 @@
 # h2m@access.uzh.ch
 
 from lxml import etree
-from os import sep
+from os import sep, sys
 from re import sub
 from sys import stdout
 
@@ -17,6 +17,33 @@ XML_SUFFIX = '.xml'
 DE_LANG = 'de'
 FR_LANG = 'fr'
 
+# Lemmata with candidate verbs for DE and FR
+CANDID_LEMMATA_DE = [
+                     'besteigen',
+                     'erreichen',
+                     'gelingen',
+                     'ersteigen', 
+                     'bezwingen',
+                     'gelangen',
+                     'erklettern',
+                     'erklimmen',
+                     'aufsteigen',
+                     'gelangen|gelingen',
+                     'bewältigen',
+                     'hinaufsteigen'
+                     ]
+CANDID_LEMMATA_FR = [
+                     'réussir',
+                     'atteindre',
+                     'gravir',
+                     'traverser',
+                     'escalader',
+                     'monter',
+                     #'obtenir',
+                     'conquérir',
+                     #'arriver'
+                     ]
+
 # NER filename substring, which indicates NER contents of an XML file.
 NER_SUBSTR = '-ner'
 
@@ -26,6 +53,9 @@ SAC_XML_DIR = 'Text+Berg_Release_147_v03' + sep + 'XML' + sep \
 
 # Range of documents to check
 YEAR_RANGE = range(1957, 2012) # 1957-2011
+
+# Name for an empty title
+EMPTY_TITLE = "NONE"
 
 class ArticlesHashed(dict):
     """Class to hold and get articles directly by id (hashed = faster).
@@ -39,21 +69,12 @@ class ArticlesHashed(dict):
         """Hash articles by article id."""
         for xml_article in xml_articles:
             self[xml_article.attrib['n']] = xml_article
-            
-# XXX: Todo if time given
-class SuperSentence:
-    """Class which unites several sentences to one, where evidence
-       *seems* given that no real sentence boundary is given by the
-       Text+Berg XML annotation."""
-       
-    def __init__(self):
-        pass
 
 class ArticleTranslated:
     """Class to hold a (single) article pair; used for analysis of 
        candidate facts."""
     
-    def __init__(self, article_pair, yearbook, book_ne):
+    def __init__(self, article_pair, yearbook, book_ne, pair_id):
         
         # Meta data
         self.yearbook = yearbook
@@ -63,6 +84,7 @@ class ArticleTranslated:
         self.sentences_fr_number = 0
         self.candidate_sentences_de_number = 0
         self.candidate_sentences_fr_number = 0
+        self.pair_id = pair_id
         
         # Effective data
         self.book_ne = book_ne
@@ -113,17 +135,6 @@ class ArticleTranslated:
                             intersection(set(word_positions))
         persons_present = set(person_positions).\
                           intersection(set(word_positions))
-        
-        """
-        if len(mountains_present) > 0:
-            print("*** Mountain")
-            
-        if len(persons_present) > 0:
-            print("*** Person")
-            
-        if len(mountains_present) > 0 and len(persons_present) > 0:
-            print("*** Both: Mountain AND Person")
-        """
 
         mountain_sentences = [position.split('-')[1] for position in \
                               mountains_present]
@@ -145,39 +156,60 @@ class ArticleTranslated:
                 for word in sentence.xpath('w'):
                     try:
                         if lang == DE_LANG:
-                            if word.attrib['lemma'] == 'besteigen':
-                                print("* * * CHECK (de)")
-                                self._print_sentence(sentence)
+                            if word.attrib['lemma'] \
+                             in CANDID_LEMMATA_DE:
+                                print("* * * * * CHECK " \
+                                      + str(self.yearbook) + "#" \
+                                      + str(self.pair_id) + " (de)")
+                                self._print_sentence(sentence, lang)
                         elif lang == FR_LANG:
-                            if word.attrib['lemma'] == 'traverser':
-                                print("* * * CHECK (fr)")
-                                self._print_sentence(sentence)
+                            if word.attrib['lemma'] \
+                             in CANDID_LEMMATA_FR:
+                                print("* * * * * CHECK " \
+                                      + str(self.yearbook) + "#" \
+                                      + str(self.pair_id) + " (fr)")
+                                self._print_sentence(sentence, lang)
                     except:
                         pass
                     try:
                         if lang == DE_LANG:
                             if word.attrib['pos'].startswith('VV'):
-                                print('VERB (' + lang + '): ' + word.text)
+                                #print('VERB (' + lang + '): ' + \
+                                # word.text)
+                                print('VERB (' + lang + '): ' + \
+                                      word.attrib['lemma'])
+
                         elif lang == FR_LANG:
                             if word.attrib['pos'].startswith('V'):
-                                print('VERB: (' + lang + '): ' + word.text)
+                                #print('VERB: (' + lang + '): ' + \
+                                # word.text)
+                                print('VERB (' + lang + '): ' + \
+                                       word.attrib['lemma'])
+
                     except:
                         pass
     
-    def _print_sentence(self, sentence):
+    def _print_sentence(self, sentence, lang):
         """Prints sentence as a whole."""
+        stdout.write('* * * SENTENCE (' + lang + '): ')
         for word in sentence.xpath('w'):
             stdout.write(word.text + " ")
+        print('\n')
                                     
     def _read_title(self, article_pair):
         """Read title (in German and French) of article pair given."""
         article_de = article_pair[0]
         article_fr = article_pair[1]
         
-        self.article_title_de = article_de.xpath('./tocEntry')[0].\
-                                attrib['title']
-        self.article_title_fr = article_fr.xpath('./tocEntry')[0].\
-                                attrib['title']
+        # It may be that a title is not given.
+        try:
+            self.article_title_de = article_de.xpath('./tocEntry')[0].\
+                                    attrib['title']
+            self.article_title_fr = article_fr.xpath('./tocEntry')[0].\
+                                    attrib['title']
+        except:
+            self.article_title_de = EMPTY_TITLE
+            self.article = EMPTY_TITLE
         
     def _read_sentences(self, article_pair):
         """Method to read in the sentences of the article 
@@ -195,6 +227,7 @@ class ArticleTranslated:
         
         ret_str = 72 * '=' + \
                   '\nArticle year: ' + str(self.yearbook) + \
+                  '\nArticle number: ' + str(self.pair_id) + \
                   '\nArticle name: ' + self.article_title_de + \
                   '\nNumber of sentences (German): ' + \
                   str(self.sentences_de_number) + \
@@ -463,46 +496,22 @@ def explore_bergsteiger(book_translated, year, book_ne):
     articles_pairs = book_translated.articles_pairs
     
     # Go through each article pair
+    pair_id = 1
     for article_pair in articles_pairs:
         article_translated = ArticleTranslated(article_pair, year, 
-                                               book_ne)
+                                               book_ne, pair_id)
+        pair_id += 1
         print(article_translated)
-    """
-    for year in YEAR_RANGE:
-        filepath_base = SAC_XML_DIR + FILENAME_PREFIX + \
-                        str(year) + '_' + DE_LANG 
-        filepath_content =  filepath_base + XML_SUFFIX
-        filepath_ner = filepath_base + '-ner' + XML_SUFFIX
-        geo_ne_dict = read_geo_ne(filepath_ner)
-                
-        sac_book_elem = etree.parse(filepath_content).xpath('/book')[0]
-        # Get all <s> (=sentence) elements in given language
-        sac_sentences_elem_list = sac_book_elem.xpath('.//s[@lang=\'' + \
-                                                lang + '\']')
-        for sac_sentence_elem in sac_sentences_elem_list:
-            print '###'
-            sac_word_elem_list = sac_sentence_elem.xpath('.//w')
-            '''
-            print filepath_content, "| Satz", \
-                  sac_sentence_elem.attrib['n']
-            '''
-            for sac_word_elem in sac_word_elem_list:
-                try: 
-                    if sac_word_elem.attrib['pos'] == 'NE' \
-                       and geo_ne_dict[sac_word_elem.attrib['n']] == \
-                           'mountain' :
-                        print sac_word_elem.text
-                    '''
-                    if sac_word_elem.attrib['lemma'] == 'besteigen':
-                        print sac_word_elem.text
-                    '''
-                except:
-                    pass
-    """
 
 def process_xml():
     
-    # Iterate through all german documents, 1957-2011
+    global YEAR_RANGE
+    
+    # If there's an argument assume it to be a year number
+    if len(sys.argv) > 1:
+        YEAR_RANGE = [sys.argv[1]]
+    
+    # Iterate through all german documents, 1957-2011 (by default)
     for year in YEAR_RANGE:
         filepath_base = SAC_XML_DIR + FILENAME_PREFIX + \
                         str(year) + '_' + DE_LANG 
@@ -511,6 +520,8 @@ def process_xml():
         
         # Search for people who climbed (supposedely) mountains
         book_ne = BookNE(year)
+        print('%')
+        print(book_ne.mountain_positions('de'))
         explore_bergsteiger(book_translated, year, book_ne)
     
 def main():
