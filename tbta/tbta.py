@@ -12,23 +12,23 @@ from re import match
 
 # Parameters
 
-# No words with an occurrence below this number are allowed
-NO_BELOW = 4 
+# Words with a global occurrence below this number are dropped
+# Suggested value = 5
+NO_BELOW = 5
 
-# Fraction of most frequent words to drop away 
-NO_ABOVE = 0.1 
-
- # Number of LDA iterations to fullfil
-PASSES = 1
+# Only words are kept that appear almost by the indicated fraction
+# in the whole corpus
+# Suggested value = 0.5
+NO_ABOVE = 0.5
 
 # Set to -1 to default to k = number of documents
-NUM_TOPICS = 42
+NUM_TOPICS = 100
 
 # Number of (random) topics to display
-TOPICS_DISPLAY = 7 
+TOPICS_DISPLAY = 100
 
 # Number of top probable words of topic shown to display
-WORDS_DISPLAY = 7 
+WORDS_DISPLAY = 10
 
 # Filename prefix
 SAC_FILENAME_PREFIX = 'SAC-Jahrbuch_'
@@ -40,14 +40,36 @@ XML_SUFFIX = '.xml'
 DE_LANG = 'de'
 FR_LANG = 'fr'
 
-# Only use German words from these categories
-DE_POS_FILTER = ['NN']
-#DE_POS_FILTER = ['NN', 'ADJA', 'ADJD', 'VVPP', 'VVINF']
+# Minimal word length
+MIN_WORDLEN = 2
 
-# Only use French words from these categories
-FR_POS_FILTER = ['N_C']
-#FR_POS_FILTER = ['N_P', 'N_C', 'V']
-#FR_POS_FILTER = ['N_C', 'A_qual', 'V']
+# Define if POS filter is to be used or not (see below)
+WITH_POS_FILTER = False
+
+# Define if lemmata should be used (if possible)
+WITH_LEMMATA = False
+
+POS_FILTER = { 
+#                DE_LANG : ['NN', 'NE', 'VVINF', 'VVFIN', 'VVIMP', 
+#                         'VVIZU', 'VAPP', 'VMPP', 'ADJA', 'ADJD'],
+                DE_LANG : ['NN', 'NE', 'VVFIN', 'VVINF', 'ADJA', 'ADJD'],
+                FR_LANG : ['N_C', 'N_C', 'A_qual', 'V']          
+             }
+
+# German stop words from NLTK
+DE_STOPWORDS = open('de_stop_words.txt', 'r').read().split('\n')
+DE_STOPWORDS.pop()
+
+# Stop words from nltk
+STOPWORDS = {
+                DE_LANG : open('de_stop_words.txt', 'r').read().\
+                                                         split('\n'),
+                FR_LANG : []
+            }
+STOPWORDS[DE_LANG].pop() 
+
+# If one of these signs are found in lemma, take surface form instead
+DE_SURFACE_TRIGGERS = ['unk', '@ord@', '|', '@card@', '+', '#', '%']
 
 # Years available in SAC corpus
 YEARS_ALLOWED = range(1864, 2012) # 1864 to 2011
@@ -64,6 +86,9 @@ BOWMM_DIR = 'bowmm_files' + sep
 
 # Folder to hold TF*IDF matrices for each document
 TFIDF_DIR = 'tfidf_files' + sep
+
+# Folder name for plain text output of articles
+TEXT_OUTPUT_DIR = 'text_output_dir'
 
 def sac_filepath(year, lang=DE_LANG):
     """Return SAC book filepath based on year and (optional) language 
@@ -82,8 +107,9 @@ class ArticlesCollection:
     """Class which holds all articles (perhaps over several years)
        -- with ability to perform LDA on it."""
     
-    def __init__(self, year_range, lang=DE_LANG):
+    def __init__(self, year_range, text_output_dirpath, lang=DE_LANG):
         self.year_range = year_range
+        self.text_output_dirpath = text_output_dirpath
         self.lang = lang
         self.articles = []
         self.bow_corpus = None
@@ -116,12 +142,21 @@ class ArticlesCollection:
         if NUM_TOPICS != -1:
             num_topics = NUM_TOPICS
         print(num_topics)
-            
+        
+        '''
+        # With TF*IDF, done correctly?
         lda = LdaModel(corpus=tfidf,
                        id2word=self.dictionary,
                        num_topics=num_topics,
                        passes=PASSES,
                        distributed=True)
+        '''
+        
+        lda = LdaModel(corpus=self.bow_corpus,
+                       id2word=self.dictionary,
+                       num_topics=num_topics,
+                       distributed=False)
+                       
         topic_number = 0
         for topic in lda.show_topics(topics=TOPICS_DISPLAY, 
                                      topn=WORDS_DISPLAY):
@@ -144,9 +179,10 @@ class ArticlesCollection:
         
         print('Create dictionary of collection.')
         self.dictionary = Dictionary(self.articles)
-        self.dictionary.filter_extremes(no_below=NO_BELOW, 
+        self.dictionary.filter_extremes(no_below=NO_BELOW,
                                         no_above=NO_ABOVE)
         self.dictionary.save_as_text(self.wordsids_filepath)
+        self.dictionary.compactify()
         print(self.dictionary)
     
     def _create_bow_representation(self):
@@ -203,6 +239,15 @@ class ArticlesCollection:
         
         # For each article
         for sac_xml_article in sac_xml_articles_list:
+            
+            # Prepare file to write out words
+            sac_xml_article_no = sac_xml_article.attrib['n']
+            out_filename = str(year) + '-' + str(self.lang) + '-' \
+                           + sac_xml_article_no + '.txt'
+            out_filepath = self.text_output_dirpath + sep + out_filename
+            print(out_filepath)
+            out_filehdl = open(out_filepath, 'w')
+                               
             article_word_list = []
             sac_xml_sentences_list = \
                 sac_xml_article.xpath('.//s[@lang=\'' + \
@@ -213,23 +258,72 @@ class ArticlesCollection:
                     sac_xml_words_list = sac_xml_sentence.xpath('.//w')
                 # For each word (in the sentence of the article)
                 for sac_xml_word in sac_xml_words_list:
+                    word = None
                     try:
-                        # Look for POS tags of FR_LANG
-                        if self.lang is not DE_LANG:
-                            if sac_xml_word.attrib['pos'] \
-                            in FR_POS_FILTER:
-                                article_word_list.append(sac_xml_word.\
-                                attrib['lemma'].lower())
-                        # Assume DE_LANG (default lang)
-                        else:
-                            if sac_xml_word.attrib['pos'] \
-                            in DE_POS_FILTER:
-                                article_word_list.append(sac_xml_word.\
-                                attrib['lemma'].lower())
-                    except: # PoS attribute may not be given
+                        if WITH_POS_FILTER is False:
+                            if WITH_LEMMATA:
+                                word = sac_xml_word.attrib['lemma'].lower()
+                                if self._is_lemma_bogus(word):
+                                    word = sac_xml_word.text.lower()
+                            if WITH_LEMMATA is False:
+                                word = sac_xml_word.text.lower()
+                        elif WITH_POS_FILTER:
+                            word = self._get_pos_filtered_word(sac_xml_word)
+                    except:
                         pass
+                        
+                    # Don't add stop words, in any case
+                    if not word in STOPWORDS[self.lang] \
+                    and word is not None and len(word) >= MIN_WORDLEN:
+                        article_word_list.append(self._normalize_word(word))
             # Save article as bag-of-words (of the sentences)
             self.articles.append(article_word_list)
+            out_filehdl.write(' '.join(article_word_list))
+            out_filehdl.close()
+    
+    def _get_pos_filtered_word(self, sac_xml_word):
+        """ Get word by PoS filter
+        """
+        # There are words without PoS tags, i. e. try
+        try:
+            if sac_xml_word.attrib['pos'] \
+            in POS_FILTER[self.lang]:
+                if WITH_LEMMATA:
+                    word = sac_xml_word.attrib['lemma'].lower()
+                    if self._is_lemma_bogus(word):
+                        return sac_xml_word.text.lower()
+                    else:
+                        return sac_xml_word.attrib['lemma'].lower()
+                else:
+                    return sac_xml_word.text.lower()
+            else:
+                return None
+        except:
+            return None
+    
+    def _is_lemma_bogus(self, lemma):
+        """ Return true if the lemma is not useful for LDA, otherwise
+            false.
+        """
+        
+        for bogus_symbol in DE_SURFACE_TRIGGERS:
+            if bogus_symbol in lemma:
+                return True
+        
+        # That's the last resort
+        return False
+    
+    def _normalize_word(self, word_to_normalize):
+        """
+        This function helps to normalize words, because of encoding
+        issues of some LDA tools ...
+        @return: Normalized word as str type
+        """
+        
+        # Transform umlauts to ASCII friendly form
+        word = word_to_normalize.replace(u"ä","ae").replace(u"ö","oe"). \
+            replace(u"ü","ue").replace(u"ß","ss")
+        return word
                 
     def __str__(self):
         """ Return a string which shows document number, number of
@@ -320,6 +414,8 @@ def get_arguments(argv):
 
     return(year_range, lang)
 
+
+
 def main():
     
     lang = ''
@@ -330,8 +426,29 @@ def main():
     
     # Check and get arguments   
     year_range, lang = get_arguments(sys.argv)
+    
+    # Construct string
+    text_output_pos_string = 'NONE'
+    if WITH_POS_FILTER:
+        text_output_pos_string = '-'.join(POS_FILTER[lang])
         
-    articles_collection = ArticlesCollection(year_range, lang)
+    text_output_lemma_string = 'TRUE'
+    if WITH_LEMMATA is False:
+        text_output_lemma_string = 'FALSE'
+        
+    text_output_dirpath = TEXT_OUTPUT_DIR + sep \
+                        +'yr=' + str(year_range[0]) \
+                        + '-' + str(year_range[-1]) \
+                        + '_lc=' + lang \
+                        + '_pf=' + text_output_pos_string \
+                        + '_lm=' + text_output_lemma_string
+    
+    if not exists(text_output_dirpath):
+        makedirs(text_output_dirpath)
+    
+    articles_collection = ArticlesCollection(year_range, 
+                                             text_output_dirpath,
+                                             lang)
     articles_collection.show_lda()
     
 if __name__ == '__main__':
