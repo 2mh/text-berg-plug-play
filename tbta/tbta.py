@@ -1,20 +1,23 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 # -*- coding: utf-8 -*-
 # h2m@access.uzh.ch
+
+from os import sep, sys, makedirs
+from os.path import exists
+from re import match
+import itertools
 
 from gensim.corpora import Dictionary, MmCorpus
 from gensim.models import TfidfModel
 from gensim.models.ldamodel import LdaModel
+from gensim.models.ldamallet import LdaMallet
 from lxml import etree
-from os import sep, sys, makedirs
-from os.path import exists
-from re import match
 
 # Parameters
 
 # Words with a global occurrence below this number are dropped
 # Suggested value = 5
-NO_BELOW = 5
+NO_BELOW = 3
 
 # Only words are kept that appear almost by the indicated fraction
 # in the whole corpus
@@ -47,12 +50,22 @@ MIN_WORDLEN = 2
 WITH_POS_FILTER = False
 
 # Define if lemmata should be used (if possible)
-WITH_LEMMATA = False
+WITH_LEMMATA = True
+
+# Use TF*IDF input instead of direct bow
+USE_TFIDF = False
+
+# Use mallet's (gibbs sampled) LDA system
+USE_MALLET = True
+
+# Number of iterations to fullfil
+ITERATIONS = 200
 
 POS_FILTER = { 
 #                DE_LANG : ['NN', 'NE', 'VVINF', 'VVFIN', 'VVIMP', 
 #                         'VVIZU', 'VAPP', 'VMPP', 'ADJA', 'ADJD'],
-                DE_LANG : ['NN', 'NE', 'VVFIN', 'VVINF', 'ADJA', 'ADJD'],
+#                DE_LANG : ['NN', 'NE', 'VVFIN', 'VVINF', 'ADJA', 'ADJD'],
+                 DE_LANG : ['NN', 'NE', 'ADJA', 'ADJD'],
                 FR_LANG : ['N_C', 'N_C', 'A_qual', 'V']          
              }
 
@@ -90,6 +103,8 @@ TFIDF_DIR = 'tfidf_files' + sep
 # Folder name for plain text output of articles
 TEXT_OUTPUT_DIR = 'text_output_dir'
 
+PATH_TO_MALLET_BIN = '/home/hernani/uzh/master/modir/mallet-2.0.7/bin/mallet'
+
 def sac_filepath(year, lang=DE_LANG):
     """Return SAC book filepath based on year and (optional) language 
        information."""
@@ -117,6 +132,9 @@ class ArticlesCollection:
         self.wordsids_filepath = ''
         self.bowmm_filepath = ''
         self.tfidf_filepath = ''
+        self.number_of_docs = 0
+        self.number_of_tokens = 0
+        self.number_of_types = 0
         
         # gensim data structures
         self.dictionary = None
@@ -127,42 +145,74 @@ class ArticlesCollection:
         self._set_filepaths()
         self._create_dictionary()
         self._create_bow_representation()
-        self._create_tfidf_matrix()
+        self._set_number_of_docs()
+        self._set_number_of_tokens()
+        self._set_number_of_types()
+        
+        # Create tf*idf matrix if requested.
+        if USE_TFIDF:
+            self._create_tfidf_matrix()
     
     def show_lda(self):
         """Show latent topics found."""
         
-        # Find out and print ten most promising LDA topics
-        tfidf = MmCorpus(self.tfidf_filepath)
-        # print(tfidf)
-        # dictionary = Dictionary.load_from_text(wordsids_filepath)
+        lda = None
+        
+        # Only use tf*idf input if requested.
+        corpus = self.bow_corpus
+        if USE_TFIDF:
+            corpus = MmCorpus(self.tfidf_filepath)
         
         # k = number of documents = number of topics (for now)
-        num_topics = tfidf.num_docs
+        num_topics = self.number_of_docs
         if NUM_TOPICS != -1:
             num_topics = NUM_TOPICS
-        print(num_topics)
         
-        '''
-        # With TF*IDF, done correctly?
-        lda = LdaModel(corpus=tfidf,
-                       id2word=self.dictionary,
-                       num_topics=num_topics,
-                       passes=PASSES,
-                       distributed=True)
-        '''
+        print('Number of docs presented: ' + str(self.number_of_docs))
+        print('Number of origin. tokens: ' + str(self.number_of_tokens))
+        print('Number of original types: ' + str(self.number_of_types))
+        print('Number of types at usage: ' + str(len(self.dictionary.\
+                                                     keys())))
+        print('Number of topics to find: ' + str(num_topics))
+        print('Number of topics to show: ' + str(TOPICS_DISPLAY))
         
-        lda = LdaModel(corpus=self.bow_corpus,
-                       id2word=self.dictionary,
-                       num_topics=num_topics,
-                       distributed=False)
+        if USE_MALLET:
+            lda = LdaMallet(PATH_TO_MALLET_BIN,
+                            corpus=corpus,
+                            num_topics=num_topics,
+                            id2word=self.dictionary,
+                            iterations=ITERATIONS)
+                            
+        else:
+            lda = LdaModel(corpus=corpus,
+                           id2word=self.dictionary,
+                           num_topics=num_topics,
+                           chunksize=1,
+                           update_every=1,
+                           decay=0.5,
+                           distributed=False)
                        
         topic_number = 0
         for topic in lda.show_topics(topics=TOPICS_DISPLAY, 
-                                     topn=WORDS_DISPLAY):
+                                     topn=WORDS_DISPLAY,
+                                     formatted=True):
             topic_number += 1
             print('Topic#' + str(topic_number) + ': ', topic)
-                            
+
+    def _set_number_of_types(self):
+        """Set number of types (from tokens)."""
+        self.number_of_types = len(set(list(itertools.\
+                                    chain(*self.articles))))
+        
+    def _set_number_of_tokens(self):
+        """Set number of tokens gotten in all documents."""
+        self.number_of_tokens = sum(len(article) \
+                                    for article in self.articles)
+        
+    def _set_number_of_docs(self):
+        """Set number of docs found in collection read in."""
+        self.number_of_docs = len(self.articles)
+        
     def _set_filepaths(self):
         """Sets filepaths for intermediate data."""
 
@@ -413,8 +463,6 @@ def get_arguments(argv):
         print_year_not_allowed()
 
     return(year_range, lang)
-
-
 
 def main():
     
