@@ -1,7 +1,8 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # -*- coding: utf-8 -*-
 # h2m@access.uzh.ch
 
+from codecs import open
 from os import sep, sys, makedirs
 from os.path import exists
 from re import match
@@ -13,16 +14,18 @@ from gensim.models.ldamodel import LdaModel
 from gensim.models.ldamallet import LdaMallet
 from lxml import etree
 
+ENCODING = 'utf-8' # For Python2 ...
+
 # Parameters
 
 # Words with a global occurrence below this number are dropped
 # Suggested value = 5
-NO_BELOW = 3
+NO_BELOW = 2
 
 # Only words are kept that appear almost by the indicated fraction
 # in the whole corpus
 # Suggested value = 0.5
-NO_ABOVE = 0.5
+NO_ABOVE = 1.0
 
 # Set to -1 to default to k = number of documents
 NUM_TOPICS = 100
@@ -69,13 +72,9 @@ POS_FILTER = {
                 FR_LANG : ['N_C', 'N_C', 'A_qual', 'V']          
              }
 
-# German stop words from NLTK
-DE_STOPWORDS = open('de_stop_words.txt', 'r').read().split('\n')
-DE_STOPWORDS.pop()
-
 # Stop words from nltk
 STOPWORDS = {
-                DE_LANG : open('de_stop_words.txt', 'r').read().\
+                DE_LANG : open('de_stop_words.txt', 'r', ENCODING).read().\
                                                          split('\n'),
                 FR_LANG : []
             }
@@ -274,10 +273,13 @@ class ArticlesCollection:
            in."""
         for year in self.year_range:
             # Not every single yearbook is available.
+            self._read_book(year)
+            '''
             try:
                 self._read_book(year)
             except:
                 print('Skip (inexistent) yearbook ' + str(year) + '.')
+            '''
         
     def _read_book(self, year):
         """Read in a a single book and save its articles."""
@@ -325,7 +327,9 @@ class ArticlesCollection:
                     # Don't add stop words, in any case
                     if not word in STOPWORDS[self.lang] \
                     and word is not None and len(word) >= MIN_WORDLEN:
-                        article_word_list.append(self._normalize_word(word))
+                        article_word_list.append(self.\
+                                                 _normalize_word(word).\
+                                                 encode(ENCODING))
             # Save article as bag-of-words (of the sentences)
             self.articles.append(article_word_list)
             out_filehdl.write(' '.join(article_word_list))
