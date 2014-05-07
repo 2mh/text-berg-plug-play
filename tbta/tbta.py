@@ -7,25 +7,32 @@ from os import sep, sys, makedirs
 from os.path import exists
 from re import match
 import itertools
+from lxml import etree
 
 from gensim.corpora import Dictionary, MmCorpus
 from gensim.models import TfidfModel
-from gensim.models.ldamodel import LdaModel
-from gensim.models.ldamallet import LdaMallet
-from lxml import etree
 
+MODEL = 'LdaModel' # Default gensim model is 'LdaModel'
+
+if MODEL == 'LdaMallet':
+    from gensim.models.ldamallet import LdaMallet
+elif MODEL == 'HdpModel':
+    from gensim.models.hdpmodel import HdpModel
+else:
+    from gensim.models.ldamodel import LdaModel # MODEL = 'LdaModel'
+    
 ENCODING = 'utf-8' # For Python2 ...
 
 # Parameters
 
 # Words with a global occurrence below this number are dropped
 # Suggested value = 5
-NO_BELOW = 2
+NO_BELOW = 5
 
 # Only words are kept that appear almost by the indicated fraction
 # in the whole corpus
 # Suggested value = 0.5
-NO_ABOVE = 1.0
+NO_ABOVE = 0.5
 
 # Set to -1 to default to k = number of documents
 NUM_TOPICS = 100
@@ -58,9 +65,6 @@ WITH_LEMMATA = True
 # Use TF*IDF input instead of direct bow
 USE_TFIDF = False
 
-# Use mallet's (gibbs sampled) LDA system
-USE_MALLET = True
-
 # Number of iterations to fullfil
 ITERATIONS = 200
 
@@ -68,7 +72,8 @@ POS_FILTER = {
 #                DE_LANG : ['NN', 'NE', 'VVINF', 'VVFIN', 'VVIMP', 
 #                         'VVIZU', 'VAPP', 'VMPP', 'ADJA', 'ADJD'],
 #                DE_LANG : ['NN', 'NE', 'VVFIN', 'VVINF', 'ADJA', 'ADJD'],
-                 DE_LANG : ['NN', 'NE', 'ADJA', 'ADJD'],
+#                 DE_LANG : ['NN', 'NE', 'ADJA', 'ADJD'],
+                 DE_LANG : ['NN', 'NE',],
                 FR_LANG : ['N_C', 'N_C', 'A_qual', 'V']          
              }
 
@@ -81,7 +86,7 @@ STOPWORDS = {
 STOPWORDS[DE_LANG].pop() 
 
 # If one of these signs are found in lemma, take surface form instead
-DE_SURFACE_TRIGGERS = ['unk', '@ord@', '|', '@card@', '+', '#', '%']
+SURFACE_TRIGGERS = ['unk', '@ord@', '|', '@card@', '+', '#', '%']
 
 # Years available in SAC corpus
 YEARS_ALLOWED = range(1864, 2012) # 1864 to 2011
@@ -155,7 +160,7 @@ class ArticlesCollection:
     def show_lda(self):
         """Show latent topics found."""
         
-        lda = None
+        model = None
         
         # Only use tf*idf input if requested.
         corpus = self.bow_corpus
@@ -175,28 +180,43 @@ class ArticlesCollection:
         print('Number of topics to find: ' + str(num_topics))
         print('Number of topics to show: ' + str(TOPICS_DISPLAY))
         
-        if USE_MALLET:
-            lda = LdaMallet(PATH_TO_MALLET_BIN,
+        if MODEL == 'LdaMallet':
+            model = LdaMallet(PATH_TO_MALLET_BIN,
                             corpus=corpus,
                             num_topics=num_topics,
                             id2word=self.dictionary,
                             iterations=ITERATIONS)
                             
+        elif MODEL == 'HdpModel':
+            model = HdpModel(corpus, self.dictionary)
         else:
-            lda = LdaModel(corpus=corpus,
+            model = LdaModel(corpus=corpus,
                            id2word=self.dictionary,
                            num_topics=num_topics,
+                           iterations=ITERATIONS,
+                           update_every=1,
+                           chunksize=10,
+                           passes=1,
+                           distributed=False)
+                           
+            '''
+            More possible options above:
                            chunksize=1,
                            update_every=1,
                            decay=0.5,
-                           distributed=False)
-                       
-        topic_number = 0
-        for topic in lda.show_topics(topics=TOPICS_DISPLAY, 
-                                     topn=WORDS_DISPLAY,
-                                     formatted=True):
-            topic_number += 1
-            print('Topic#' + str(topic_number) + ': ', topic)
+            '''
+        
+        if MODEL == 'LdaModel' or MODEL == 'LdaMallet':               
+            topic_number = 0
+            for topic in model.show_topics(topics=TOPICS_DISPLAY, 
+                                         topn=WORDS_DISPLAY,
+                                         formatted=True):
+                topic_number += 1
+                print('Topic#' + str(topic_number) + ': ', topic)
+        else: # For MODEL 'HdpModel'
+            for topic in model.print_topics(topics=TOPICS_DISPLAY, \
+                               topn=WORDS_DISPLAY):
+                print topic
 
     def _set_number_of_types(self):
         """Set number of types (from tokens)."""
@@ -273,13 +293,10 @@ class ArticlesCollection:
            in."""
         for year in self.year_range:
             # Not every single yearbook is available.
-            self._read_book(year)
-            '''
             try:
                 self._read_book(year)
             except:
                 print('Skip (inexistent) yearbook ' + str(year) + '.')
-            '''
         
     def _read_book(self, year):
         """Read in a a single book and save its articles."""
@@ -360,7 +377,7 @@ class ArticlesCollection:
             false.
         """
         
-        for bogus_symbol in DE_SURFACE_TRIGGERS:
+        for bogus_symbol in SURFACE_TRIGGERS:
             if bogus_symbol in lemma:
                 return True
         
